@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">TESIS</string>
+    <string name="camera_permission_required">Camera permission is required for detection.</string>
+    <string name="grant_permission">Grant Permission</string>
+    <string name="whiteflies_detected">Whiteflies detected: %d</string>
+    <string name="mip_status_low">Low (Green)</string>
+    <string name="mip_status_medium">Medium (Yellow)</string>
+    <string name="mip_status_high">High (Red)</string>
+    <string name="mip_title">MIP Status</string>
+    <string name="start_detection">Start Detection</string>
+    <string name="stop_detection">Stop Detection</string>
+    <string name="capture">Capture</string>
+    <string name="select_gallery">Gallery</string>
+    <string name="back_to_live">Live View</string>
+    <string name="image_analysis">Image Analysis</string>
+    <string name="max_score">Max Score: %.2f</string>
+    <string name="status_searching">Searching Trap...</string>
+    <string name="status_focusing">Focusing...</string>
+    <string name="status_ready">READY TO CAPTURE</string>
+    <string name="status_not_centered">Center the Trap</string>
+</resources>

@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">TESIS</string>
+    <string name="camera_permission_required">Se requiere permiso de cámara para la detección.</string>
+    <string name="grant_permission">Otorgar Permiso</string>
+    <string name="whiteflies_detected">Moscas blancas detectadas: %d</string>
+    <string name="mip_status_low">Bajo (Verde)</string>
+    <string name="mip_status_medium">Medio (Amarillo)</string>
+    <string name="mip_status_high">Alto (Rojo)</string>
+    <string name="mip_title">Estado MIP</string>
+    <string name="start_detection">Iniciar Detección</string>
+    <string name="stop_detection">Detener Detección</string>
+    <string name="capture">Capturar</string>
+    <string name="select_gallery">Galería</string>
+    <string name="back_to_live">Cámara en Vivo</string>
+    <string name="image_analysis">Análisis de Imagen</string>
+    <string name="max_score">Score Máx: %.2f</string>
+    <string name="status_searching">Buscando trampa...</string>
+    <string name="status_focusing">Enfocando...</string>
+    <string name="status_ready">¡LISTO PARA CAPTURAR!</string>
+    <string name="status_not_centered">Centra la trampa</string>
+</resources>
