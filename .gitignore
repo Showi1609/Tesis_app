@@ -19,3 +19,6 @@ local.properties
 
 # Cache del compilador Kotlin
 .kotlin/
+
+# Backups locales de modelos .tflite reemplazados (no parte del entregable)
+modelo_backups/
