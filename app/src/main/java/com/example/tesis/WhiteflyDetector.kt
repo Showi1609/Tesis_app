@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.RectF
 import android.util.Log
+import com.example.tesis.util.ModelInfo
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 import java.io.FileInputStream
@@ -21,13 +22,28 @@ data class Deteccion(val cx: Float, val cy: Float, val w: Float, val h: Float, v
 data class BoxedDeteccion(val rect: RectF, val score: Float)
 
 data class DetectionResult(
-    val detections: List<BoxedDeteccion>, 
-    val imageWidth: Int, 
-    val imageHeight: Int, 
+    val detections: List<BoxedDeteccion>,
+    val imageWidth: Int,
+    val imageHeight: Int,
     val rotation: Int = 0,
     val maxScore: Float = 0f,
-    val modelOutputInfo: String = ""
+    val modelOutputInfo: String = "",
+    /**
+     * Umbrales con los que se produjo ESTE resultado.
+     *
+     * Van en el resultado y no leídos de una constante al guardar, porque desde
+     * que son ajustables la constante ya no describe lo que ocurrió: dos
+     * muestreos del mismo día pueden haberse contado con umbrales distintos, y
+     * sin este dato el conteo deja de ser reproducible.
+     */
+    val confThreshold: Float = ModelInfo.CONF_THRESHOLD,
+    val iouThreshold: Float = ModelInfo.IOU_NMS,
+    /** "COMPLETA" o "MOSAICO_3x3": con qué estrategia se produjo el conteo. */
+    val detectionMode: String = MODE_WHOLE
 )
+
+const val MODE_WHOLE = "COMPLETA"
+const val MODE_TILED_PREFIX = "MOSAICO_"
 
 class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") {
 
@@ -144,48 +160,258 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
         return inputBuffer
     }
 
-    fun detect(bitmap: Bitmap, rotation: Int = 0, isLive: Boolean = true): DetectionResult {
+    /**
+     * @param confThreshold confianza mínima para aceptar un candidato.
+     * @param iouThreshold solape a partir del cual el NMS considera duplicada una
+     *   caja. En trampas cromáticas las moscas se pegan unas a otras, así que un
+     *   valor bajo borra vecinas reales y subestima justo en alta densidad.
+     */
+    fun detect(
+        bitmap: Bitmap,
+        rotation: Int = 0,
+        isLive: Boolean = true,
+        confThreshold: Float = ModelInfo.CONF_THRESHOLD,
+        iouThreshold: Float = ModelInfo.IOU_NMS
+    ): DetectionResult {
+        val conf = confThreshold.coerceIn(ModelInfo.CONF_MIN, ModelInfo.CONF_MAX)
+        val iou = iouThreshold.coerceIn(ModelInfo.IOU_MIN, ModelInfo.IOU_MAX)
+
         if (isLive) {
             if (!detectorLock.tryLock()) {
-                return DetectionResult(emptyList(), bitmap.width, bitmap.height, rotation, 0f, "Busy")
+                return DetectionResult(
+                    emptyList(), bitmap.width, bitmap.height, rotation, 0f, "Busy", conf, iou
+                )
             }
         } else {
             detectorLock.lock()
         }
-        
-        var lb: Letterbox? = null
+
         return try {
-            if (isClosed) return DetectionResult(emptyList(), bitmap.width, bitmap.height, rotation, 0f, "Closed")
-            
-            lb = letterbox(bitmap)
+            if (isClosed) return DetectionResult(
+                emptyList(), bitmap.width, bitmap.height, rotation, 0f, "Closed", conf, iou
+            )
+
+            val (boxedDetections, maxScore) = inferBoxes(bitmap, conf, iou, 0f, 0f)
+
+            Log.d("WhiteflyDetector", "Detections: ${boxedDetections.size}, MaxScore: $maxScore")
+
+            DetectionResult(
+                detections = boxedDetections,
+                imageWidth = bitmap.width,
+                imageHeight = bitmap.height,
+                rotation = rotation,
+                maxScore = maxScore,
+                modelOutputInfo = "In: $inputSize, Out: [$outputRows, $outputCols]" +
+                    ", conf ${"%.2f".format(conf)}, IoU ${"%.2f".format(iou)}",
+                confThreshold = conf,
+                iouThreshold = iou,
+                detectionMode = MODE_WHOLE
+            )
+        } catch (e: Exception) {
+            Log.e("WhiteflyDetector", "Error en detección", e)
+            val errorMsg = e.toString().take(50)
+            DetectionResult(
+                emptyList(), bitmap.width, bitmap.height, rotation, 0f, "Err: $errorMsg", conf, iou
+            )
+        } finally {
+            detectorLock.unlock()
+        }
+    }
+
+    /**
+     * Detección por mosaico.
+     *
+     * El tamaño de entrada del modelo está grabado en el .tflite y no se puede
+     * cambiar: si es 640, siempre es 640. Lo que sí se puede cambiar es cuántos
+     * centímetros de trampa caben en esos 640 píxeles. Al partir la foto en una
+     * rejilla y pasar cada trozo entero por el modelo, cada píxel de entrada
+     * cubre la tercera parte de trampa (con rejilla 3×3), así que una mosca que
+     * medía 4 px pasa a medir unos 12. Ahí está la diferencia entre "no la ve" y
+     * "la ve".
+     *
+     * El precio son [grid]² inferencias en vez de una. Solo tiene sentido sobre
+     * la foto fija, nunca sobre el visor en vivo.
+     *
+     * @param grid lado de la rejilla: 3 significa 3×3 = 9 trozos.
+     * @param overlapFraction traslape entre trozos vecinos, como fracción del
+     *   lado del trozo. Sin traslape, una mosca justo en la costura se parte en
+     *   dos y ninguna mitad se parece a una mosca.
+     */
+    fun detectTiled(
+        bitmap: Bitmap,
+        rotation: Int = 0,
+        grid: Int = ModelInfo.TILE_GRID_DEFAULT,
+        overlapFraction: Float = ModelInfo.TILE_OVERLAP,
+        confThreshold: Float = ModelInfo.CONF_THRESHOLD,
+        iouThreshold: Float = ModelInfo.IOU_NMS
+    ): DetectionResult {
+        val g = grid.coerceIn(ModelInfo.TILE_GRID_MIN, ModelInfo.TILE_GRID_MAX)
+        if (g <= 1) return detect(bitmap, rotation, isLive = false, confThreshold, iouThreshold)
+
+        val conf = confThreshold.coerceIn(ModelInfo.CONF_MIN, ModelInfo.CONF_MAX)
+        val iou = iouThreshold.coerceIn(ModelInfo.IOU_MIN, ModelInfo.IOU_MAX)
+
+        detectorLock.lock()
+        return try {
+            if (isClosed) return DetectionResult(
+                emptyList(), bitmap.width, bitmap.height, rotation, 0f, "Closed", conf, iou
+            )
+
+            val columns = tilePositions(bitmap.width, g, overlapFraction)
+            val rows = tilePositions(bitmap.height, g, overlapFraction)
+
+            val all = mutableListOf<BoxedDeteccion>()
+            var maxScore = 0f
+
+            columns.forEach { (x0, tileW) ->
+                rows.forEach { (y0, tileH) ->
+                    val tile = Bitmap.createBitmap(bitmap, x0, y0, tileW, tileH)
+                    try {
+                        val (boxes, score) = inferBoxes(
+                            tile, conf, iou, x0.toFloat(), y0.toFloat()
+                        )
+                        all += boxes
+                        if (score > maxScore) maxScore = score
+                    } finally {
+                        if (tile != bitmap) tile.recycle()
+                    }
+                }
+            }
+
+            val merged = mergeOverlapping(all, iou)
+
+            Log.d(
+                "WhiteflyDetector",
+                "Mosaico ${g}x$g: ${all.size} crudas -> ${merged.size} tras fusionar"
+            )
+
+            DetectionResult(
+                detections = merged,
+                imageWidth = bitmap.width,
+                imageHeight = bitmap.height,
+                rotation = rotation,
+                maxScore = maxScore,
+                modelOutputInfo = "In: $inputSize x ${g * g} trozos" +
+                    ", conf ${"%.2f".format(conf)}, IoU ${"%.2f".format(iou)}",
+                confThreshold = conf,
+                iouThreshold = iou,
+                detectionMode = "$MODE_TILED_PREFIX${g}x$g"
+            )
+        } catch (e: Exception) {
+            Log.e("WhiteflyDetector", "Error en detección por mosaico", e)
+            val errorMsg = e.toString().take(50)
+            DetectionResult(
+                emptyList(), bitmap.width, bitmap.height, rotation, 0f, "Err: $errorMsg", conf, iou
+            )
+        } finally {
+            detectorLock.unlock()
+        }
+    }
+
+    /**
+     * Núcleo de inferencia sobre un bitmap, con las cajas trasladadas al sistema
+     * de coordenadas de la imagen completa. Exige el lock ya tomado, porque
+     * [bitmapATensor] escribe sobre un búfer compartido.
+     */
+    private fun inferBoxes(
+        source: Bitmap,
+        conf: Float,
+        iou: Float,
+        offsetX: Float,
+        offsetY: Float
+    ): Pair<List<BoxedDeteccion>, Float> {
+        val lb = letterbox(source)
+        try {
             val entrada = bitmapATensor(lb.bitmap)
-            
+
             val outputBuffer: Any = if (isOutputUint8) {
                 Array(1) { Array(outputRows) { ByteArray(outputCols) } }
             } else {
                 Array(1) { Array(outputRows) { FloatArray(outputCols) } }
             }
-            
+
             interpreter.run(entrada, outputBuffer)
-            
-            val (deteccionesRaw, maxScore) = decodificarFlexible(outputBuffer, umbralConfianza = 0.25f)
-            
-            val finalDetections = nms(deteccionesRaw)
-            val boxedDetections = finalDetections.map { d ->
-                BoxedDeteccion(aCoordenadasOriginales(d, lb), d.score)
+
+            val (deteccionesRaw, maxScore) = decodificarFlexible(outputBuffer, umbralConfianza = conf)
+
+            val boxes = nms(deteccionesRaw, iou).map { d ->
+                val r = aCoordenadasOriginales(d, lb)
+                BoxedDeteccion(
+                    RectF(
+                        r.left + offsetX,
+                        r.top + offsetY,
+                        r.right + offsetX,
+                        r.bottom + offsetY
+                    ),
+                    d.score
+                )
             }
-            
-            Log.d("WhiteflyDetector", "Detections: ${boxedDetections.size}, MaxScore: $maxScore")
-            
-            DetectionResult(boxedDetections, bitmap.width, bitmap.height, rotation, maxScore, "In: $inputSize, Out: [$outputRows, $outputCols]")
-        } catch (e: Exception) {
-            Log.e("WhiteflyDetector", "Error en detección", e)
-            val errorMsg = e.toString().take(50)
-            DetectionResult(emptyList(), bitmap.width, bitmap.height, rotation, 0f, "Err: $errorMsg")
+            return boxes to maxScore
         } finally {
-            lb?.bitmap?.recycle() // Liberar memoria del bitmap temporal
-            detectorLock.unlock()
+            lb.bitmap.recycle()
         }
+    }
+
+    /**
+     * Posiciones de los trozos a lo largo de un eje, como (inicio, tamaño).
+     *
+     * Con traslape f, los trozos miden total / (grid - (grid-1)·f) y se reparten
+     * uniformemente entre 0 y total - tamaño, de modo que el primero empieza en
+     * el borde y el último termina en el borde: ningún píxel queda sin mirar.
+     */
+    private fun tilePositions(total: Int, grid: Int, overlap: Float): List<Pair<Int, Int>> {
+        if (grid <= 1 || total <= 1) return listOf(0 to total)
+        val f = overlap.coerceIn(0f, 0.5f)
+        val span = grid - (grid - 1) * f
+        val tile = kotlin.math.ceil(total / span).toInt().coerceIn(1, total)
+        if (tile >= total) return listOf(0 to total)
+        return (0 until grid).map { i ->
+            val start = ((total - tile).toFloat() * i / (grid - 1)).toInt()
+                .coerceIn(0, total - tile)
+            start to tile
+        }.distinct()
+    }
+
+    /**
+     * Fusiona las cajas de todos los trozos.
+     *
+     * Además del IoU normal se descarta una caja cuando queda casi contenida en
+     * otra mayor. Hace falta para las costuras: una mosca cortada por el borde de
+     * un trozo produce media caja, y media caja frente a la caja completa da un
+     * IoU de apenas 0.5 — con umbrales altos sobreviviría y la mosca se contaría
+     * dos veces. La contención sí la detecta.
+     */
+    private fun mergeOverlapping(
+        boxes: List<BoxedDeteccion>,
+        umbralIou: Float,
+        umbralContencion: Float = 0.65f
+    ): List<BoxedDeteccion> {
+        val ordenadas = boxes.sortedByDescending { it.score }.toMutableList()
+        val resultado = mutableListOf<BoxedDeteccion>()
+        while (ordenadas.isNotEmpty()) {
+            val mejor = ordenadas.removeAt(0)
+            resultado.add(mejor)
+            ordenadas.removeAll { otra ->
+                val inter = intersectionArea(mejor.rect, otra.rect)
+                if (inter <= 0f) return@removeAll false
+                val areaA = mejor.rect.width() * mejor.rect.height()
+                val areaB = otra.rect.width() * otra.rect.height()
+                val union = areaA + areaB - inter
+                val iou = if (union > 0f) inter / union else 0f
+                val menor = minOf(areaA, areaB)
+                val contencion = if (menor > 0f) inter / menor else 0f
+                iou > umbralIou || contencion > umbralContencion
+            }
+        }
+        return resultado
+    }
+
+    private fun intersectionArea(a: RectF, b: RectF): Float {
+        val ix1 = maxOf(a.left, b.left)
+        val iy1 = maxOf(a.top, b.top)
+        val ix2 = minOf(a.right, b.right)
+        val iy2 = minOf(a.bottom, b.bottom)
+        return maxOf(0f, ix2 - ix1) * maxOf(0f, iy2 - iy1)
     }
 
     private fun decodificarFlexible(salida: Any, umbralConfianza: Float): Pair<List<Deteccion>, Float> {
@@ -251,7 +477,7 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
         return detecciones to globalMaxScore
     }
 
-    private fun nms(detecciones: List<Deteccion>, umbralIou: Float = 0.45f): List<Deteccion> {
+    private fun nms(detecciones: List<Deteccion>, umbralIou: Float = ModelInfo.IOU_NMS): List<Deteccion> {
         val ordenadas = detecciones.sortedByDescending { it.score }.toMutableList()
         val resultado = mutableListOf<Deteccion>()
         while (ordenadas.isNotEmpty()) {

@@ -22,3 +22,10 @@ local.properties
 
 # Backups locales de modelos .tflite reemplazados (no parte del entregable)
 modelo_backups/
+
+# Snapshots automaticos de sesiones de desarrollo previas (no parte del entregable)
+_backups/
+
+# Logs de build/crash locales
+build_log*.txt
+hs_err_pid*.log

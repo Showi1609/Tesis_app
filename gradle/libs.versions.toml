@@ -13,7 +13,6 @@ cameraX = "1.4.0"
 gson = "2.10.1"
 playServicesLocation = "21.0.1"
 navigationCompose = "2.7.7"
-vico = "1.14.0"
 coil = "2.6.0"
 mapsCompose = "4.4.1"
 playServicesMaps = "18.2.0"
@@ -49,10 +48,6 @@ androidx-navigation-compose = { group = "androidx.navigation", name = "navigatio
 # Location
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
 
-# Vico Charts
-vico-compose = { group = "com.patrykandpatrick.vico", name = "compose", version.ref = "vico" }
-vico-compose-m3 = { group = "com.patrykandpatrick.vico", name = "compose-m3", version.ref = "vico" }
-vico-core = { group = "com.patrykandpatrick.vico", name = "core", version.ref = "vico" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 maps-compose = { group = "com.google.maps.android", name = "maps-compose", version.ref = "mapsCompose" }
 play-services-maps = { group = "com.google.android.gms", name = "play-services-maps", version.ref = "playServicesMaps" }

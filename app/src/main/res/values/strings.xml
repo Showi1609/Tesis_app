@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">TESIS</string>
+    <string name="app_name">BioCount</string>
     <string name="camera_permission_required">Camera permission is required for detection.</string>
     <string name="grant_permission">Grant Permission</string>
     <string name="whiteflies_detected">Whiteflies detected: %d</string>

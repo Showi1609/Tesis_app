@@ -75,10 +75,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.coil.compose)
 
-    // Vico Charts
-    implementation(libs.vico.compose)
-    implementation(libs.vico.compose.m3)
-    implementation(libs.vico.core)
+    // Las gráficas se dibujan con Canvas de Compose (ui/Charts.kt); se eliminó
+    // la dependencia de Vico para no atarse a su API entre versiones.
 
     // Maps
     implementation(libs.maps.compose)
