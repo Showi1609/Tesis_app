@@ -1,5 +1,6 @@
 package com.example.tesis.util
 
+import com.example.tesis.BoxedDeteccion
 import kotlin.math.abs
 
 /**
@@ -189,25 +190,39 @@ object Metrics {
     // mano; el acierto real solo sale del conteo del experto.
     // ---------------------------------------------------------------------
 
-    fun meanScore(e: DetectionEntity): Double? =
-        e.detections?.takeIf { it.isNotEmpty() }?.map { it.score.toDouble() }?.average()
+    // Version sobre la lista cruda de detecciones: la usa tanto la pantalla de
+    // captura (antes de guardar, sobre un DetectionResult que todavia no es una
+    // entidad) como el historial (sobre un DetectionEntity ya guardado). Una
+    // sola fuente de verdad para los umbrales, para que "certeza alta" signifique
+    // lo mismo en las dos pantallas.
+    fun meanScore(detections: List<BoxedDeteccion>?): Double? =
+        detections?.takeIf { it.isNotEmpty() }?.map { it.score.toDouble() }?.average()
 
-    fun minScore(e: DetectionEntity): Double? =
-        e.detections?.takeIf { it.isNotEmpty() }?.minOf { it.score.toDouble() }
+    fun meanScore(e: DetectionEntity): Double? = meanScore(e.detections)
+
+    fun minScore(detections: List<BoxedDeteccion>?): Double? =
+        detections?.takeIf { it.isNotEmpty() }?.minOf { it.score.toDouble() }
+
+    fun minScore(e: DetectionEntity): Double? = minScore(e.detections)
 
     /** Detecciones apenas por encima del umbral, que son las más dudosas. */
+    fun lowConfidenceCount(detections: List<BoxedDeteccion>?, below: Double = 0.35): Int? =
+        detections?.count { it.score < below }
+
     fun lowConfidenceCount(e: DetectionEntity, below: Double = 0.35): Int? =
-        e.detections?.count { it.score < below }
+        lowConfidenceCount(e.detections, below)
 
     /** Etiqueta cualitativa de la confianza media, para leerla de un vistazo. */
-    fun confidenceLabel(e: DetectionEntity): String? {
-        val mean = meanScore(e) ?: return null
+    fun confidenceLabel(mean: Double?): String? {
+        mean ?: return null
         return when {
             mean >= 0.60 -> "Alta"
             mean >= 0.40 -> "Media"
             else -> "Baja"
         }
     }
+
+    fun confidenceLabel(e: DetectionEntity): String? = confidenceLabel(meanScore(e))
 
     /** Estado del semáforo MIP según los umbrales de conteo del cultivo. */
     fun mipStatus(count: Int, low: Int, medium: Int): MipStatus = when {

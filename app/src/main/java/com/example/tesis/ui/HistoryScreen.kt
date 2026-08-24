@@ -930,20 +930,20 @@ fun ReliabilityRow(item: DetectionEntity) {
             Box(Modifier.size(8.dp).clip(CircleShape).background(color))
             Spacer(Modifier.width(6.dp))
             Text(
-                text = buildString {
-                    append("Confianza del modelo: ")
-                    append(label.lowercase())
-                    append(" (media ")
-                    append("%.2f".format(mean))
-                    Metrics.minScore(item)?.let {
-                        append(", mínima ")
-                        append("%.2f".format(it))
-                    }
-                    append(")")
-                },
+                text = "Confianza del modelo: ${label.lowercase()}",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 color = color
+            )
+            Spacer(Modifier.width(6.dp))
+            // El decimal se muestra aparte, chico y gris: la etiqueta cualitativa
+            // es la que se lee de un vistazo, el numero es solo detalle para quien
+            // lo busca (antes iban pegados y del mismo color, y un numero cercano
+            // al umbral en amarillo/rojo se leia como "algo anda mal").
+            Text(
+                text = "(media %.2f)".format(mean),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
             )
         }
         Metrics.lowConfidenceCount(item)?.takeIf { it > 0 }?.let { low ->

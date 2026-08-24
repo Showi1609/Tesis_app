@@ -958,21 +958,24 @@ fun DetectionOverlay(result: DetectionResult) {
 
 /**
  * Certeza del modelo sobre lo que detectó, no acierto: son cosas distintas (ver
- * la bitácora, apartado 4.1). Se calcula sobre la confianza media de las
- * detecciones ACEPTADAS (post-umbral y NMS), no sobre el máximo de los
- * candidatos crudos como mostraba la versión anterior — ese máximo se veía bajo
- * en amarillo casi siempre y no reflejaba la calidad real de la lectura.
+ * la bitácora, apartado 4.1). Reutiliza [util.Metrics.confidenceLabel] — la misma
+ * función y los mismos umbrales que usa el historial ([ui.HistoryScreen]), para
+ * que "certeza alta" signifique lo mismo en las dos pantallas. Solo se muestra
+ * la etiqueta cualitativa, sin el decimal crudo: ese fue justo el problema de la
+ * versión anterior (se veía bajo en amarillo casi siempre y no reflejaba la
+ * calidad real de la lectura).
  */
 @Composable
 fun ModelCertaintyBadge(detections: List<BoxedDeteccion>) {
-    if (detections.isEmpty()) return
-    val meanConf = detections.map { it.score }.average().toFloat()
-    val (label, color) = when {
-        meanConf >= 0.55f -> "Certeza del modelo: alta" to Color(0xFF4CAF50)
-        meanConf >= 0.35f -> "Certeza del modelo: media" to Color(0xFFFFC107)
-        else -> "Certeza del modelo: baja — revisar" to Color(0xFFFF7043)
+    val label = com.example.tesis.util.Metrics.confidenceLabel(
+        com.example.tesis.util.Metrics.meanScore(detections)
+    ) ?: return
+    val color = when (label) {
+        "Alta" -> Color(0xFF57C785)
+        "Media" -> Color(0xFFFFD166)
+        else -> Color(0xFFFF6B6B)
     }
-    Text(text = label, color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    Text(text = "Certeza del modelo: ${label.lowercase()}", color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium)
 }
 
 @Composable
