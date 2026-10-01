@@ -212,7 +212,10 @@ fun MainScreen(settingsManager: SettingsManager) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val detector = remember {
-        try { WhiteflyDetector(context) } catch (_: Exception) { null }
+        try { WhiteflyDetector(context) } catch (e: Throwable) {
+            Log.e("MainActivity", "Failed to initialize detector", e)
+            null
+        }
     }
     val framingAssistant = remember { FramingAssistant() }
     val locationHelper = remember { LocationHelper(context) }
@@ -391,7 +394,6 @@ fun DetectorView(
 ) {
     val context = LocalContext.current
     val settings by settingsManager.settings.collectAsState()
-    val (low, medium) = settingsManager.getThresholdsFor(settings.selectedCropName)
 
     // El analizador de CameraX se construye una sola vez, así que no puede
     // capturar los umbrales por valor: quedarían congelados en lo que hubiera al
@@ -706,19 +708,13 @@ fun DetectorView(
         ) {
             val count = detectionResult?.detections?.size ?: 0
             Text(
-                text = stringResource(id = R.string.whiteflies_detected, count),
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium
-            )
-            Text(
                 text = "${settings.selectedGreenhouseName} · ${settings.selectedTrapId}",
                 color = Color.White.copy(alpha = 0.7f),
                 fontSize = 12.sp
             )
 
             detectionResult?.let { ModelCertaintyBadge(it.detections) }
-            MipTrafficLight(count = count, lowThreshold = low, mediumThreshold = medium)
+            MipTrafficLight(count = count)
         }
         }
     }
@@ -784,12 +780,15 @@ fun StaticImageView(
     onSave: (Int, DetectionResult?) -> Unit
 ) {
     val settings by settingsManager.settings.collectAsState()
-    val (low, medium) = settingsManager.getThresholdsFor(settings.selectedCropName)
 
     var result by remember { mutableStateOf<DetectionResult?>(null) }
     var isLoading by remember { mutableStateOf(value = true) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+
+    // Estado para el progreso del mosaico
+    var progressIndex by remember { mutableIntStateOf(0) }
+    var progressTotal by remember { mutableIntStateOf(0) }
 
     // Los umbrales entran como clave: si se cambian en Ajustes, la foto que está
     // en pantalla se vuelve a analizar en vez de quedarse con el conteo viejo.
@@ -799,6 +798,9 @@ fun StaticImageView(
     val tileGrid = settings.tileGridOrDefault
     LaunchedEffect(bitmap, staticConf, staticIou, tiled, tileGrid) {
         isLoading = true
+        progressIndex = 0
+        progressTotal = if (tiled) tileGrid * tileGrid else 1
+        
         withContext(Dispatchers.Default) {
             result = if (tiled) {
                 detector.detectTiled(
@@ -806,7 +808,11 @@ fun StaticImageView(
                     rotation = 0,
                     grid = tileGrid,
                     confThreshold = staticConf,
-                    iouThreshold = staticIou
+                    iouThreshold = staticIou,
+                    onProgress = { current, total ->
+                        progressIndex = current
+                        progressTotal = total
+                    }
                 )
             } else {
                 detector.detect(bitmap, 0, isLive = false, staticConf, staticIou)
@@ -851,7 +857,40 @@ fun StaticImageView(
         }
 
         if (isLoading) {
-            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.Black.copy(alpha = 0.7f))
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(
+                        progress = { if (progressTotal > 0) progressIndex.toFloat() / progressTotal else 0f },
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = if (progressTotal > 1) {
+                            "Analizando trampa: $progressIndex de $progressTotal"
+                        } else {
+                            "Analizando imagen..."
+                        },
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (progressTotal > 1) {
+                        Text(
+                            text = "${(progressIndex * 100 / progressTotal)}%",
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                }
+            }
         }
 
         Column(
@@ -868,12 +907,7 @@ fun StaticImageView(
                 height = 65.dp
             )
             val count = result?.detections?.size ?: 0
-            Text(
-                text = stringResource(id = R.string.whiteflies_detected, count),
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium
-            )
+            MipTrafficLight(count = count)
 
             // Densidad previa al guardado, con la geometría de la finca en curso.
             val profile = trapRegistry.farmProfile(settings.selectedFarmName)
@@ -900,7 +934,6 @@ fun StaticImageView(
             }
 
             result?.let { ModelCertaintyBadge(it.detections) }
-            MipTrafficLight(count = count, lowThreshold = low, mediumThreshold = medium)
         }
     }
 }
@@ -979,18 +1012,13 @@ fun ModelCertaintyBadge(detections: List<BoxedDeteccion>) {
 }
 
 @Composable
-fun MipTrafficLight(count: Int, lowThreshold: Int = 5, mediumThreshold: Int = 15) {
-    val (statusResId, color) = when {
-        count < lowThreshold -> R.string.mip_status_low to Color.Green
-        count < mediumThreshold -> R.string.mip_status_medium to Color.Yellow
-        else -> R.string.mip_status_high to Color.Red
-    }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(text = stringResource(id = R.string.mip_title) + ": ", color = Color.White, fontWeight = FontWeight.Bold)
-        Box(modifier = Modifier.size(12.dp).clip(CircleShape).background(color))
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(text = stringResource(id = statusResId), color = color, fontWeight = FontWeight.Bold)
-    }
+fun MipTrafficLight(count: Int) {
+    Text(
+        text = "Conteo de esta cara: $count ind.",
+        color = Color.White,
+        fontWeight = FontWeight.Bold,
+        fontSize = 15.sp
+    )
 }
 
 /**
@@ -1055,6 +1083,15 @@ fun SaveDetectionDialog(
     var face by remember { mutableStateOf(suggestedFace) }
     var faceTouched by remember { mutableStateOf(false) }
     LaunchedEffect(suggestedFace) { if (!faceTouched) face = suggestedFace }
+
+    val otherFaceCount = remember(historyToday, trapCode, greenhouseName, face) {
+        val otherFace = if (face == TrapFace.A) TrapFace.B else TrapFace.A
+        historyToday.find {
+            it.trapIdOrDefault == trapCode &&
+                it.greenhouseOrDefault == greenhouseName &&
+                it.faceEnum == otherFace
+        }?.count
+    }
     var manualCountText by remember { mutableStateOf("") }
     var truePositivesText by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
@@ -1354,6 +1391,32 @@ fun SaveDetectionDialog(
                         density?.let {
                             Text("Densidad: ${"%.2f".format(it)} ind/100 cm²", fontSize = 13.sp)
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        if (otherFaceCount == null) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Estado trampa: ", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Color.Gray))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("INCOMPLETA (solo cara ${face.code})", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            val totalCount = appDetectedCount + otherFaceCount
+                            val (low, medium) = settingsManager.getThresholdsFor(selectedCrop)
+                            val status = Metrics.mipStatus(totalCount, low, medium)
+                            val color = when (status) {
+                                com.example.tesis.util.MipStatus.BAJO -> Color.Green
+                                com.example.tesis.util.MipStatus.MEDIO -> Color.Yellow
+                                com.example.tesis.util.MipStatus.ALTO -> Color.Red
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Estado trampa ($totalCount ind): ", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(color))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(status.label, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
                         val manual = manualCountText.toIntOrNull()
                         if (manual != null && manual > 0) {
                             val relative = (appDetectedCount - manual).toDouble() / manual * 100.0

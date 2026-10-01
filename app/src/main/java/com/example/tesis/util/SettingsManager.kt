@@ -36,21 +36,21 @@ data class AppSettings(
     val iouNms: Float? = null,
 
     /** Detección por mosaico. Apagada por omisión: se enciende para comparar. */
-    val tiledDetection: Boolean? = null,
-    val tileGrid: Int? = null
+    val tiledDetection: Boolean? = true,
+    val tileGrid: Int? = 2
 )
 
 val AppSettings.confThresholdOrDefault: Float
-    get() = confThreshold?.coerceIn(ModelInfo.CONF_MIN, ModelInfo.CONF_MAX) ?: ModelInfo.CONF_THRESHOLD
+    get() = ModelInfo.CONF_THRESHOLD
 
 val AppSettings.iouNmsOrDefault: Float
-    get() = iouNms?.coerceIn(ModelInfo.IOU_MIN, ModelInfo.IOU_MAX) ?: ModelInfo.IOU_NMS
+    get() = ModelInfo.IOU_NMS
 
 val AppSettings.tiledDetectionOrDefault: Boolean
-    get() = tiledDetection ?: false
+    get() = tiledDetection ?: true
 
 val AppSettings.tileGridOrDefault: Int
-    get() = (tileGrid ?: ModelInfo.TILE_GRID_DEFAULT)
+    get() = (tileGrid ?: 2)
         .coerceIn(ModelInfo.TILE_GRID_MIN, ModelInfo.TILE_GRID_MAX)
 
 /** Tope del lado largo al capturar, según si hay mosaico. */

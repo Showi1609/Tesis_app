@@ -56,6 +56,9 @@ import com.example.tesis.util.SessionManager
 import com.example.tesis.util.SettingsManager
 import com.example.tesis.util.TrapRecord
 import com.example.tesis.util.TrapRegistry
+import com.example.tesis.util.TrapAggregate
+import com.example.tesis.util.MipStatus
+import com.example.tesis.util.aggregateByTrap
 import com.example.tesis.util.evidenceFileName
 import com.example.tesis.util.exportToCsv
 import com.example.tesis.util.exportToXlsx
@@ -97,6 +100,8 @@ fun HistoryScreen(settingsManager: SettingsManager) {
         ) {
             AppLogo(height = 65.dp)
         }
+        
+        val settingsManagerCtx = remember { SettingsManager(context) }
         
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
             Row(
@@ -178,11 +183,15 @@ fun HistoryScreen(settingsManager: SettingsManager) {
                 Text("No hay registros aún", color = MaterialTheme.colorScheme.secondary)
             }
         } else {
+            val aggregates = remember(detections) { detections.aggregateByTrap() }
             LazyColumn {
                 items(detections, key = { it.id }) { item ->
+                    val aggregate = aggregates.find { it.records.contains(item) }
                     DetectionItem(
                         item = item,
+                        aggregate = aggregate,
                         sdf = sdf,
+                        settingsManager = settingsManagerCtx,
                         onDelete = { historyManager.delete(item) },
                         onEdit = { editingItem = item },
                         onViewMap = {
@@ -215,7 +224,9 @@ fun HistoryScreen(settingsManager: SettingsManager) {
 @Composable
 fun DetectionItem(
     item: DetectionEntity,
+    aggregate: TrapAggregate?,
     sdf: SimpleDateFormat,
+    settingsManager: SettingsManager,
     onDelete: () -> Unit,
     onEdit: () -> Unit,
     onViewMap: () -> Unit,
@@ -257,6 +268,31 @@ fun DetectionItem(
                         fontWeight = FontWeight.Bold,
                         fontSize = 19.sp
                     )
+
+                    // Estado MIP por trampa
+                    Spacer(modifier = Modifier.height(2.dp))
+                    val thresholds = settingsManager.getThresholdsFor(item.cropOrDefault)
+                    val status = if (aggregate?.isComplete == true) {
+                        aggregate.mipStatusPerTrap(thresholds.first, thresholds.second)
+                    } else null
+                    
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (status != null) {
+                            val color = when(status) {
+                                MipStatus.BAJO -> Color.Green
+                                MipStatus.MEDIO -> Color.Yellow
+                                MipStatus.ALTO -> Color.Red
+                            }
+                            Box(modifier = Modifier.size(10.dp).background(color, CircleShape))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Estado MIP: ${status.label}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = color)
+                        } else {
+                            Box(modifier = Modifier.size(10.dp).background(Color.Gray, CircleShape))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("TRAMPA INCOMPLETA", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.Gray)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     ReliabilityRow(item)
 

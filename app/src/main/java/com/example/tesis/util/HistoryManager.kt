@@ -111,14 +111,7 @@ data class DetectionEntity(
 
     /** Milisegundos del inicio del día local del muestreo, para agrupar por fecha. */
     fun dayStartMillis(): Long {
-        val cal = Calendar.getInstance().apply {
-            timeInMillis = timestamp
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        return cal.timeInMillis
+        return com.example.tesis.util.dayStartMillis(timestamp)
     }
 }
 

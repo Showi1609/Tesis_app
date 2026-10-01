@@ -9,6 +9,7 @@ import android.util.Log
 import com.example.tesis.util.ModelInfo
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
+import org.tensorflow.lite.gpu.GpuDelegate
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -48,9 +49,13 @@ const val MODE_TILED_PREFIX = "MOSAICO_"
 class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") {
 
     private val interpreter: Interpreter
+    private var gpuDelegate: GpuDelegate? = null
     private val inputBuffer: ByteBuffer
     private val inputSize: Int
     private val intPixels: IntArray
+    
+    // Reutilizar buffer de salida para evitar OOM y GC pauses en mosaico
+    private val outputBuffer: Any
     
     private val detectorLock = ReentrantLock()
     private var isClosed = false
@@ -68,10 +73,22 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
 
     init {
         val model = cargarModeloDesdeAssets(context, modelPath)
-        interpreter = Interpreter(model)
+        
+        val options = Interpreter.Options().apply {
+            try {
+                gpuDelegate = GpuDelegate()
+                addDelegate(gpuDelegate)
+                Log.d("WhiteflyDetector", "GPU Delegate added successfully")
+            } catch (e: Throwable) {
+                Log.w("WhiteflyDetector", "GPU Delegate failed to load, falling back to CPU", e)
+                setNumThreads(4)
+            }
+        }
+        
+        interpreter = Interpreter(model, options)
         
         val inputTensor = interpreter.getInputTensor(0)
-        val inputShape = inputTensor.shape() // Esperado [1, Size, Size, 3]
+        val inputShape = inputTensor.shape()
         inputSize = inputShape[1]
         intPixels = IntArray(inputSize * inputSize)
         
@@ -84,12 +101,18 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
         outputRows = shape[1]
         outputCols = shape[2]
         
-        // YOLOv8: [1, 5, 8400] o [1, 5, 33600]
         isTransposed = outputRows > outputCols 
         
         isOutputUint8 = outputTensor.dataType() == DataType.UINT8 || outputTensor.dataType() == DataType.INT8
         outputScale = if (outputTensor.quantizationParams().scale != 0f) outputTensor.quantizationParams().scale else 1f
         outputZeroPoint = outputTensor.quantizationParams().zeroPoint
+        
+        // Inicializar el buffer de salida una sola vez
+        outputBuffer = if (isOutputUint8) {
+            Array(1) { Array(outputRows) { ByteArray(outputCols) } }
+        } else {
+            Array(1) { Array(outputRows) { FloatArray(outputCols) } }
+        }
         
         val bytesPerChannel = if (isInputUint8) 1 else 4
         inputBuffer = ByteBuffer.allocateDirect(1 * inputSize * inputSize * 3 * bytesPerChannel).order(ByteOrder.nativeOrder())
@@ -138,19 +161,22 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
         inputBuffer.rewind()
         try {
             bitmap.getPixels(intPixels, 0, inputSize, 0, 0, inputSize, inputSize)
-            for (pixel in intPixels) {
-                val r = ((pixel shr 16) and 0xFF)
-                val g = ((pixel shr 8) and 0xFF)
-                val b = (pixel and 0xFF)
-                
-                if (isInputUint8) {
+            
+            if (isInputUint8) {
+                for (pixel in intPixels) {
+                    val r = (pixel shr 16) and 0xFF
+                    val g = (pixel shr 8) and 0xFF
+                    val b = pixel and 0xFF
                     inputBuffer.put(((r / 255f / inputScale) + inputZeroPoint).toInt().toByte())
                     inputBuffer.put(((g / 255f / inputScale) + inputZeroPoint).toInt().toByte())
                     inputBuffer.put(((b / 255f / inputScale) + inputZeroPoint).toInt().toByte())
-                } else {
-                    inputBuffer.putFloat(r / 255f)
-                    inputBuffer.putFloat(g / 255f)
-                    inputBuffer.putFloat(b / 255f)
+                }
+            } else {
+                val floatBuffer = inputBuffer.asFloatBuffer()
+                for (pixel in intPixels) {
+                    floatBuffer.put(((pixel shr 16) and 0xFF) / 255f)
+                    floatBuffer.put(((pixel shr 8) and 0xFF) / 255f)
+                    floatBuffer.put((pixel and 0xFF) / 255f)
                 }
             }
         } catch (e: Exception) {
@@ -243,7 +269,8 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
         grid: Int = ModelInfo.TILE_GRID_DEFAULT,
         overlapFraction: Float = ModelInfo.TILE_OVERLAP,
         confThreshold: Float = ModelInfo.CONF_THRESHOLD,
-        iouThreshold: Float = ModelInfo.IOU_NMS
+        iouThreshold: Float = ModelInfo.IOU_NMS,
+        onProgress: (Int, Int) -> Unit = { _, _ -> }
     ): DetectionResult {
         val g = grid.coerceIn(ModelInfo.TILE_GRID_MIN, ModelInfo.TILE_GRID_MAX)
         if (g <= 1) return detect(bitmap, rotation, isLive = false, confThreshold, iouThreshold)
@@ -259,6 +286,8 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
 
             val columns = tilePositions(bitmap.width, g, overlapFraction)
             val rows = tilePositions(bitmap.height, g, overlapFraction)
+            val totalTiles = columns.size * rows.size
+            var currentTile = 0
 
             val all = mutableListOf<BoxedDeteccion>()
             var maxScore = 0f
@@ -272,6 +301,9 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
                         )
                         all += boxes
                         if (score > maxScore) maxScore = score
+                        
+                        currentTile++
+                        onProgress(currentTile, totalTiles)
                     } finally {
                         if (tile != bitmap) tile.recycle()
                     }
@@ -321,14 +353,8 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
         offsetY: Float
     ): Pair<List<BoxedDeteccion>, Float> {
         val lb = letterbox(source)
-        try {
+        return try {
             val entrada = bitmapATensor(lb.bitmap)
-
-            val outputBuffer: Any = if (isOutputUint8) {
-                Array(1) { Array(outputRows) { ByteArray(outputCols) } }
-            } else {
-                Array(1) { Array(outputRows) { FloatArray(outputCols) } }
-            }
 
             interpreter.run(entrada, outputBuffer)
 
@@ -346,7 +372,7 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
                     d.score
                 )
             }
-            return boxes to maxScore
+            boxes to maxScore
         } finally {
             lb.bitmap.recycle()
         }
@@ -421,14 +447,12 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
         val numBoxes = if (isTransposed) outputRows else outputCols
         val numClasses = if (isTransposed) outputCols else outputRows
 
-        // Casting fuera del bucle para máximo rendimiento
         val floatSalida = if (!isOutputUint8) salida as Array<Array<FloatArray>> else null
         val byteSalida = if (isOutputUint8) salida as Array<Array<ByteArray>> else null
         
         for (i in 0 until numBoxes) {
             val startClassIndex = 4
             
-            // Leer score con acceso directo según el tipo
             var maxClassScore = if (isTransposed) {
                 if (floatSalida != null) floatSalida[0][i][startClassIndex]
                 else (byteSalida!![0][i][startClassIndex].toInt() and 0xFF - outputZeroPoint) * outputScale
@@ -453,20 +477,30 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
             if (maxClassScore > globalMaxScore) globalMaxScore = maxClassScore
             
             if (maxClassScore >= umbralConfianza) {
-                val coords = FloatArray(4)
-                for (cIdx in 0 until 4) {
-                    coords[cIdx] = if (isTransposed) {
-                        if (floatSalida != null) floatSalida[0][i][cIdx]
-                        else (byteSalida!![0][i][cIdx].toInt() and 0xFF - outputZeroPoint) * outputScale
+                var cx: Float; var cy: Float; var w: Float; var h: Float
+                
+                if (isTransposed) {
+                    if (floatSalida != null) {
+                        cx = floatSalida[0][i][0]; cy = floatSalida[0][i][1]
+                        w = floatSalida[0][i][2]; h = floatSalida[0][i][3]
                     } else {
-                        if (floatSalida != null) floatSalida[0][cIdx][i]
-                        else (byteSalida!![0][cIdx][i].toInt() and 0xFF - outputZeroPoint) * outputScale
+                        cx = (byteSalida!![0][i][0].toInt() and 0xFF - outputZeroPoint) * outputScale
+                        cy = (byteSalida[0][i][1].toInt() and 0xFF - outputZeroPoint) * outputScale
+                        w = (byteSalida[0][i][2].toInt() and 0xFF - outputZeroPoint) * outputScale
+                        h = (byteSalida[0][i][3].toInt() and 0xFF - outputZeroPoint) * outputScale
+                    }
+                } else {
+                    if (floatSalida != null) {
+                        cx = floatSalida[0][0][i]; cy = floatSalida[0][1][i]
+                        w = floatSalida[0][2][i]; h = floatSalida[0][3][i]
+                    } else {
+                        cx = (byteSalida!![0][0][i].toInt() and 0xFF - outputZeroPoint) * outputScale
+                        cy = (byteSalida[0][1][i].toInt() and 0xFF - outputZeroPoint) * outputScale
+                        w = (byteSalida[0][2][i].toInt() and 0xFF - outputZeroPoint) * outputScale
+                        h = (byteSalida[0][3][i].toInt() and 0xFF - outputZeroPoint) * outputScale
                     }
                 }
-
-                var cx = coords[0]; var cy = coords[1]; var w = coords[2]; var h = coords[3]
                 
-                // Normalizar si el modelo devuelve valores en [0, 1]
                 if (cx <= 1.01f && w <= 1.01f) {
                     cx *= inputSize; cy *= inputSize; w *= inputSize; h *= inputSize
                 }
@@ -514,6 +548,7 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
         try {
             isClosed = true
             interpreter.close()
+            gpuDelegate?.close()
         } finally {
             detectorLock.unlock()
         }

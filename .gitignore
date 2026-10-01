@@ -29,3 +29,6 @@ _backups/
 # Logs de build/crash locales
 build_log*.txt
 hs_err_pid*.log
+
+# Respaldo local v1.0 campo (no parte de git)
+_respaldo_v1.0_campo/

@@ -13,7 +13,7 @@ import kotlin.math.abs
  * Deben coincidir con los usados en [com.example.tesis.WhiteflyDetector].
  */
 object ModelInfo {
-    const val VERSION = "whitefly_yolov8n_combinado-6_int8-dinamica"
+    const val VERSION = "whitefly_yolov8n_combinado-6_v2_int8-dinamica"
 
     /** Valores de fábrica. Ahora son ajustables; cada muestra guarda los suyos. */
     const val CONF_THRESHOLD = 0.25f
@@ -370,6 +370,27 @@ data class TrapAggregate(
             val values = records.mapNotNull { Metrics.catchPerFacePerDay(it) }
             return if (values.isEmpty()) null else values.sum()
         }
+
+    /** Capturas por trampa por semana (informativo). */
+    val catchPerTrapPerWeek: Double?
+        get() = if (isComplete) catchPerTrapPerDay?.times(7.0) else null
+
+    /** Estado MIP basado en la suma de ambas caras de la trampa. */
+    fun mipStatusPerTrap(low: Int, medium: Int): MipStatus? {
+        if (!isComplete) return null
+        return Metrics.mipStatus(totalCount, low, medium)
+    }
+}
+
+fun dayStartMillis(timestamp: Long): Long {
+    val cal = java.util.Calendar.getInstance().apply {
+        timeInMillis = timestamp
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    return cal.timeInMillis
 }
 
 /**

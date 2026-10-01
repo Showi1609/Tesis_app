@@ -40,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -811,13 +812,13 @@ private fun WarningNote(text: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f)
+            containerColor = Color(0xFF441B1B), // Rojo oscuro sólido para mejor contraste
+            contentColor = Color(0xFFFFDADA)   // Texto claro
         )
     ) {
         Text(
             text,
             fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onErrorContainer,
             modifier = Modifier.padding(12.dp)
         )
     }

@@ -32,7 +32,7 @@ fun AppLogo(
 ) {
     Image(
         painter = painterResource(id = R.drawable.logo_horizontal),
-        contentDescription = "BioCount MIPE",
+        contentDescription = "BioCount MIP",
         contentScale = ContentScale.Fit,
         modifier = modifier
             .height(height)
@@ -51,7 +51,7 @@ fun AppLogoIcon(
 ) {
     Image(
         painter = painterResource(id = R.drawable.logo_icon_only),
-        contentDescription = "BioCount MIPE",
+        contentDescription = "BioCount MIP",
         contentScale = ContentScale.Fit,
         modifier = modifier.size(size)
     )

@@ -23,10 +23,10 @@ import java.io.OutputStream
  */
 
 /** Subcarpeta dentro de Descargas donde quedan todas las exportaciones. */
-const val DOWNLOAD_FOLDER = "BioCount MIPE"
+const val DOWNLOAD_FOLDER = "BioCount MIP"
 
 /**
- * Escribe un archivo en Descargas/BioCount MIPE.
+ * Escribe un archivo en Descargas/BioCount MIP.
  *
  * En Android 10 y superior usa MediaStore, que no pide permisos. En versiones
  * anteriores no hay ruta pública sin permiso de escritura, así que cae en el

@@ -35,7 +35,9 @@ private class RowContext(
     val e: DetectionEntity,
     val trap: TrapRecord?,
     val status: String?,
-    val session: SamplingSession?
+    val session: SamplingSession?,
+    val trapAggregate: TrapAggregate?,
+    val trapStatus: String?
 )
 
 private class Column(
@@ -107,6 +109,9 @@ private val columns: List<Column> = listOf(
     Column("densidad_ind_100cm2", 18) { num(Metrics.densityPer100Cm2(it.e)) },
     Column("capturas_cara_dia", 16) { num(Metrics.catchPerFacePerDay(it.e)) },
     Column("estado_semaforo", 14) { text(it.status) },
+    Column("conteo_trampa", 14) { whole(it.trapAggregate?.totalCount) },
+    Column("estado_trampa", 16) { text(it.trapStatus) },
+    Column("adultos_trampa_semana", 22) { num(it.trapAggregate?.catchPerTrapPerWeek, 1) },
 
     // Confianza del modelo (no es acierto: solo lo seguro que estaba)
     Column("confianza_media", 14) { num(Metrics.meanScore(it.e), 4) },
@@ -151,14 +156,41 @@ private fun buildContexts(
     settingsManager: SettingsManager?,
     trapRegistry: TrapRegistry?,
     sessionManager: SessionManager?
-): List<RowContext> = detections.sortedBy { it.timestamp }.map { e ->
-    val thresholds = settingsManager?.getThresholdsFor(e.cropOrDefault)
-    RowContext(
-        e = e,
-        trap = trapRegistry?.findTrap(e.farmOrDefault, e.greenhouseOrDefault, e.trapIdOrDefault),
-        status = thresholds?.let { (low, medium) -> Metrics.mipStatus(e.count, low, medium).label },
-        session = sessionManager?.find(e.sessionId)
-    )
+): List<RowContext> {
+    val aggregates = detections.aggregateByTrap()
+    return detections.sortedBy { it.timestamp }.map { e ->
+        val thresholds = settingsManager?.getThresholdsFor(e.cropOrDefault)
+        val aggregate = aggregates.find {
+            it.farm == e.farmOrDefault &&
+            it.greenhouse == e.greenhouseOrDefault &&
+            it.trapId == e.trapIdOrDefault &&
+            it.dayStart == e.dayStartMillis()
+        }
+        
+        val trapStatus = if (aggregate != null) {
+            val isCurrentFaceActive = (e == aggregate.faceA || e == aggregate.faceB)
+            if (!isCurrentFaceActive) {
+                "CAPTURA REEMPLAZADA"
+            } else if (!aggregate.isComplete) {
+                "TRAMPA INCOMPLETA"
+            } else if (thresholds != null) {
+                aggregate.mipStatusPerTrap(thresholds.first, thresholds.second)?.label
+            } else {
+                null
+            }
+        } else "TRAMPA INCOMPLETA"
+        
+        val statusLabel = thresholds?.let { (low, medium) -> Metrics.mipStatus(e.count, low, medium).label }
+        
+        RowContext(
+            e = e,
+            trap = trapRegistry?.findTrap(e.farmOrDefault, e.greenhouseOrDefault, e.trapIdOrDefault),
+            status = statusLabel,
+            session = sessionManager?.find(e.sessionId),
+            trapAggregate = aggregate,
+            trapStatus = trapStatus
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------

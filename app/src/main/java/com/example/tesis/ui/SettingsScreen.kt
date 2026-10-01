@@ -376,11 +376,6 @@ private fun DetectionThresholdsCard(settingsManager: SettingsManager) {
                     fontSize = 16.sp,
                     modifier = Modifier.weight(1f)
                 )
-                if (!settings.usesDefaultThresholds) {
-                    TextButton(onClick = { settingsManager.resetDetectionThresholds() }) {
-                        Text("Restablecer", fontSize = 12.sp)
-                    }
-                }
             }
 
             Spacer(Modifier.height(6.dp))
@@ -393,11 +388,12 @@ private fun DetectionThresholdsCard(settingsManager: SettingsManager) {
                 value = conf,
                 onValueChange = { conf = it },
                 onValueChangeFinished = { settingsManager.updateDetectionThresholds(conf, iou) },
-                valueRange = ModelInfo.CONF_MIN..ModelInfo.CONF_MAX
+                valueRange = ModelInfo.CONF_MIN..ModelInfo.CONF_MAX,
+                enabled = false // Bloqueado: Parámetro validado
             )
             Text(
                 "Más baja recupera moscas dudosas y deja entrar polvo y restos. " +
-                    "De fábrica: ${"%.2f".format(ModelInfo.CONF_THRESHOLD)}.",
+                    "Configuración no validada si se cambia. De fábrica: ${"%.2f".format(ModelInfo.CONF_THRESHOLD)}.",
                 fontSize = 11.sp
             )
 
@@ -411,28 +407,24 @@ private fun DetectionThresholdsCard(settingsManager: SettingsManager) {
                 value = iou,
                 onValueChange = { iou = it },
                 onValueChangeFinished = { settingsManager.updateDetectionThresholds(conf, iou) },
-                valueRange = ModelInfo.IOU_MIN..ModelInfo.IOU_MAX
+                valueRange = ModelInfo.IOU_MIN..ModelInfo.IOU_MAX,
+                enabled = false // Bloqueado: Parámetro validado
             )
             Text(
                 "En la trampa las moscas se pegan unas a otras. Si dos cajas vecinas se " +
-                    "solapan más que este valor, una se borra por duplicada — y ese " +
-                    "subconteo empeora justo en alta densidad. Subirlo conserva más. " +
-                    "De fábrica: ${"%.2f".format(ModelInfo.IOU_NMS)}.",
+                    "solapan más que este valor, una se borra por duplicada. " +
+                    "Configuración no validada si se cambia. De fábrica: ${"%.2f".format(ModelInfo.IOU_NMS)}.",
                 fontSize = 11.sp
             )
 
-            if (!settings.usesDefaultThresholds) {
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Con estos valores el conteo sobre la MISMA foto cambia. Los " +
-                        "muestreos anteriores no son comparables con los nuevos salvo que " +
-                        "se reporte el umbral de cada uno; va en el .xlsx, columnas " +
-                        "conf_umbral e iou_nms.",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Los umbrales de inferencia (0.25 y 0.45) han sido bloqueados en la versión validada " +
+                    "para garantizar la comparabilidad de los conteos.",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.error
+            )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 14.dp))
 
