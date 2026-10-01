@@ -63,7 +63,8 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     // TENSORFLOW Y CAMERAX
-    implementation(libs.tensorflow.lite)
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)

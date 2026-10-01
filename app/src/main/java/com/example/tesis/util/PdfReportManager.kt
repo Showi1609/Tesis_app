@@ -77,7 +77,7 @@ fun generatePdfReport(context: Context, detections: List<DetectionEntity>) {
     // ---------------- Encabezado ----------------
     canvas.drawText("REPORTE DE MONITOREO MIP — MOSCA BLANCA", marginLeft, y, titlePaint)
     y += 18f
-    canvas.drawText("BioCount MIPE · Trialeurodes vaporariorum", marginLeft, y, mutedPaint)
+    canvas.drawText("BioCount MIP · Trialeurodes vaporariorum", marginLeft, y, mutedPaint)
     y += 12f
     canvas.drawText("Generado el ${dateFmt.format(Date())}", marginLeft, y, mutedPaint)
     y += 10f

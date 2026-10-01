@@ -28,7 +28,7 @@ import java.util.Locale
  * sola como evidencia.
  */
 
-private const val ALBUM = "BioCount MIPE"
+private const val ALBUM = "BioCount MIP"
 
 /**
  * Reconstruye la imagen del muestreo.

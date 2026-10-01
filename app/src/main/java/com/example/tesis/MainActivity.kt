@@ -212,7 +212,10 @@ fun MainScreen(settingsManager: SettingsManager) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val detector = remember {
-        try { WhiteflyDetector(context) } catch (_: Exception) { null }
+        try { WhiteflyDetector(context) } catch (e: Throwable) {
+            Log.e("MainActivity", "Failed to initialize detector", e)
+            null
+        }
     }
     val framingAssistant = remember { FramingAssistant() }
     val locationHelper = remember { LocationHelper(context) }
@@ -791,6 +794,10 @@ fun StaticImageView(
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
 
+    // Estado para el progreso del mosaico
+    var progressIndex by remember { mutableIntStateOf(0) }
+    var progressTotal by remember { mutableIntStateOf(0) }
+
     // Los umbrales entran como clave: si se cambian en Ajustes, la foto que está
     // en pantalla se vuelve a analizar en vez de quedarse con el conteo viejo.
     val staticConf = settings.confThresholdOrDefault
@@ -799,6 +806,9 @@ fun StaticImageView(
     val tileGrid = settings.tileGridOrDefault
     LaunchedEffect(bitmap, staticConf, staticIou, tiled, tileGrid) {
         isLoading = true
+        progressIndex = 0
+        progressTotal = if (tiled) tileGrid * tileGrid else 1
+        
         withContext(Dispatchers.Default) {
             result = if (tiled) {
                 detector.detectTiled(
@@ -806,7 +816,11 @@ fun StaticImageView(
                     rotation = 0,
                     grid = tileGrid,
                     confThreshold = staticConf,
-                    iouThreshold = staticIou
+                    iouThreshold = staticIou,
+                    onProgress = { current, total ->
+                        progressIndex = current
+                        progressTotal = total
+                    }
                 )
             } else {
                 detector.detect(bitmap, 0, isLive = false, staticConf, staticIou)
@@ -851,7 +865,40 @@ fun StaticImageView(
         }
 
         if (isLoading) {
-            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.Black.copy(alpha = 0.7f))
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(
+                        progress = { if (progressTotal > 0) progressIndex.toFloat() / progressTotal else 0f },
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = if (progressTotal > 1) {
+                            "Analizando trampa: $progressIndex de $progressTotal"
+                        } else {
+                            "Analizando imagen..."
+                        },
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (progressTotal > 1) {
+                        Text(
+                            text = "${(progressIndex * 100 / progressTotal)}%",
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                }
+            }
         }
 
         Column(
