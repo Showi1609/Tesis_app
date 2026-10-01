@@ -1,18 +1,28 @@
 *.iml
 .gradle
+local.properties
 /local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
+
+# Archivos de configuracion del IDE Android Studio / IntelliJ
+.idea/
+/.idea/
+
+# Carpetas de compilacion y artefactos de salida
+build/
 /build
+app/build/
+/app/build
 /captures
 .externalNativeBuild
 .cxx
-local.properties
+
+# Binarios y claves de firma
+*.apk
+*.aab
+*.jks
+*.keystore
+
+.DS_Store
 
 # Notas de planificacion internas de asistentes de IA (no son entregable del proyecto)
 .artifacts/
