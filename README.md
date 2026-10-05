@@ -22,14 +22,16 @@ imágenes a ningún servidor y no sincroniza datos de forma automática.
 3. **Calcula** la densidad (individuos por cm² y por 100 cm²), el semáforo MIP
    (Bajo · Medio · Alto, por trampa, sumando sus dos caras) y la certeza del conteo.
 4. **Guarda** cada registro localmente y muestra el historial, el mapa de trampas con mapa de
-   calor por invernadero y los reportes de evolución poblacional.
+   calor por invernadero y los reportes de evolución poblacional. Desde la versión 1.2, la foto
+   original de cada captura se guarda además en la galería del teléfono
+   (`Imágenes/BioCount MIP`), con su SHA-256 en el registro.
 5. **Exporta** los registros en XLSX y CSV, reportes en PDF e imágenes con las detecciones.
 
 ## Flujo de inferencia (`WhiteflyDetector.kt`)
 
 | Paso | Detalle |
 |---|---|
-| Redimensionado | lado largo ≤ 2048 px (cámara) o ≤ 2560 px (galería) |
+| Redimensionado | lado largo ≤ 2048 px (cámara) o ≤ 2560 px (galería); las fotos `BioCount_*` reabiertas desde la galería usan 2048 px, igual que en la captura |
 | Mosaico | 2 × 2 teselas con 20 % de traslape (modo por defecto) |
 | Entrada del modelo | letterbox a 1280 × 1280 px, relleno gris (114), píxeles / 255 |
 | Inferencia | TensorFlow Lite con delegado de GPU y respaldo en CPU (4 hilos) |
@@ -49,7 +51,8 @@ SHA-256: `a4be7a54d71861a2a48e83630c0516dfa96c2b29927b7e42280587e20e388fa4`
 - **Inferencia:** `WhiteflyDetector.kt` (decodificación de cajas, NMS y fusión implementados en Kotlin)
 - **Lógica MIP y metadatos del modelo:** `util/Metrics.kt`
 - **Persistencia:** archivos JSON en el almacenamiento privado de la app, con Gson
-  (`history.json`, `sessions.json`, `traps.json`, `farm_map.json`, `settings.json`)
+  (`history.json`, `sessions.json`, `traps.json`, `farm_map.json`, `settings.json`); fotos
+  originales en el almacenamiento compartido (`Pictures/BioCount MIP`, `util/ImageHelper.kt`)
 - **Mapa:** Google Maps (Maps Compose) con mapa de calor IDW confinado a cada invernadero (`util/Heatmap.kt`)
 - **Exportación:** `util/ExportHelper.kt`, `util/XlsxWriter.kt` (XLSX sin dependencias externas),
   `util/PdfReportManager.kt`, `util/ImageExport.kt`
@@ -61,6 +64,7 @@ SHA-256: `a4be7a54d71861a2a48e83630c0516dfa96c2b29927b7e42280587e20e388fa4`
 | `v1.0-validada` | Versión con la que se integró el modelo final. |
 | `v1.0-campo` | Versión usada en las jornadas de validación en producción (16 y 23 de septiembre de 2026). |
 | `v1.1` | Cambios posteriores a la validación (semáforo por trampa, parámetros bloqueados, mosaico por defecto). No modifica la detección ni el conteo; ver `CHANGELOG.md`. |
+| `v1.2` | Guarda la foto original en la galería y registra su SHA-256, el tope de redimensionado y el delegado de inferencia usados, para reanalizar las mismas fotos de forma reproducible. No modifica la detección ni el conteo. |
 
 ## Compilar
 
@@ -72,7 +76,8 @@ SHA-256: `a4be7a54d71861a2a48e83630c0516dfa96c2b29927b7e42280587e20e388fa4`
 
 > **Advertencia:** no ejecutar pruebas instrumentadas (`connectedAndroidTest`) en un teléfono con
 > datos de campo. Al terminar, el sistema de pruebas desinstala la app y con ella su
-> almacenamiento interno (fotos e historial). Exportar los registros antes de cualquier prueba.
+> almacenamiento interno (historial y copias reducidas). Desde la versión 1.2 las fotos originales
+> quedan en la galería, pero el historial no: exportar los registros antes de cualquier prueba.
 
 ## Privacidad
 
