@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2] - 2026-10-04
+Ningún cambio altera la detección ni el conteo: el modelo `.tflite` y la configuración algorítmica de NMS/Mosaico permanecen invariables y los píxeles preprocesados para inferencia son idénticos a las versiones previas.
+
+### Añadido
+- **Guardado de foto original en galería**: La captura desde la cámara ahora guarda de forma automática la foto original sin compresión severa (como JPEG limpio) directamente en la carpeta "Pictures/BioCount MIP" del teléfono, permitiendo inspección externa o reanálisis posterior. Solo se guarda si el usuario confirma el muestreo en el diálogo final.
+- **Reanálisis Reproducible**: Se añadió soporte algorítmico al preprocesamiento para garantizar que al abrir una imagen de la galería de la app (iniciando con `BioCount_`) se aplique el mismo límite de escalado máximo que al disparar con la cámara, garantizando la invariabilidad espacial de los análisis.
+- **Columnas de Trazabilidad**: El historial JSON y las hojas exportables ahora incluyen metadatos como el SHA-256 original de la foto, el URI y el delegado real usado para inferencia (GPU/CPU).
+
 ## [1.1] - 2026-10-01
 Ningún cambio altera la detección ni el conteo: WhiteflyDetector.kt y la lógica de inferencia no se modificaron (comparación de código contra la versión de campo) y el modelo assets/whitefly.tflite conserva el SHA-256 a4be7a54d71861a2a48e83630c0516dfa96c2b29927b7e42280587e20e388fa4.
 
