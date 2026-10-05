@@ -332,37 +332,44 @@ fun MainScreen(settingsManager: SettingsManager) {
                 scope.launch {
                     val (count, result) = pendingResult!!
                     val location = if (hasLocationPermission) locationHelper.getCurrentLocation() else null
-                    val imagePath = capturedImage?.let { saveOriginalImage(context, it) }
+                    
+                    val source = capturedSource
+                    val bitmapToKeep = capturedImage
+                    val rawBytes = pendingRawBytes
+                    val galleryUri = pendingOriginalUri
+                    val galleryName = pendingOriginalFileName
+                    val rotation = pendingRotationDegrees ?: 0
 
                     var originalUri: String? = null
                     var originalFileName: String? = null
                     var originalSha256: String? = null
                     var originalW: Int? = null
                     var originalH: Int? = null
+                    var originalFailed = false
 
-                    if (capturedSource == ImageSource.CAMERA) {
-                        val rawBytes = pendingRawBytes
-                        if (rawBytes != null) {
+                    val imagePath = withContext(Dispatchers.IO) {
+                        val path = bitmapToKeep?.let { saveOriginalImage(context, it) }
+                        if (source == ImageSource.CAMERA && rawBytes != null) {
                             val saved = com.example.tesis.util.saveOriginalToGallery(
-                                context, rawBytes,
-                                meta.farm, meta.greenhouse, meta.trapId, meta.face.code
+                                context, rawBytes, meta.farm, meta.greenhouse, meta.trapId, meta.face.code, rotation
                             )
-                            originalUri = saved.uri
-                            originalFileName = saved.fileName
-                            originalSha256 = saved.sha256
-
-                            val opt = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                            android.graphics.BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opt)
-                            originalW = opt.outWidth
-                            originalH = opt.outHeight
+                            if (saved.uri != null) {
+                                originalUri = saved.uri
+                                originalFileName = saved.fileName
+                                originalSha256 = saved.sha256
+                                val opt = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                android.graphics.BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opt)
+                                originalW = opt.outWidth
+                                originalH = opt.outHeight
+                            } else {
+                                originalFailed = true
+                            }
+                        } else if (source == ImageSource.GALLERY && galleryUri != null) {
+                            originalUri = galleryUri.toString()
+                            originalFileName = galleryName
+                            originalSha256 = com.example.tesis.util.calculateSha256FromUri(context, galleryUri)
                         }
-                    } else if (capturedSource == ImageSource.GALLERY) {
-                        val cUri = pendingOriginalUri
-                        if (cUri != null) {
-                            originalUri = cUri.toString()
-                            originalFileName = pendingOriginalFileName
-                            originalSha256 = com.example.tesis.util.calculateSha256FromUri(context, cUri)
-                        }
+                        path
                     }
 
                     val entity = DetectionEntity(
@@ -406,8 +413,8 @@ fun MainScreen(settingsManager: SettingsManager) {
                         originalSha256 = originalSha256,
                         originalWidth = originalW,
                         originalHeight = originalH,
-                        processingMaxDim = if (capturedSource == ImageSource.CAMERA) 2048 else 2560,
-                        inferenceDelegate = "GPU"
+                        processingMaxDim = pendingMaxDimUsed,
+                        inferenceDelegate = detector?.activeDelegate
                     )
                     historyManager.add(entity)
                     settingsManager.updateSamplingContext(meta.farm, meta.greenhouse, meta.trapId)
@@ -417,6 +424,11 @@ fun MainScreen(settingsManager: SettingsManager) {
                         val densityText = density?.let {
                             " · %.2f ind/100 cm²".format(it)
                         } ?: ""
+                        
+                        if (originalFailed) {
+                            Toast.makeText(context, "No se pudo guardar la foto original; el registro sí se guardó", Toast.LENGTH_LONG).show()
+                        }
+                        
                         Toast.makeText(
                             context,
                             "Guardado: ${meta.trapId} cara ${meta.face.code}$densityText",
@@ -427,6 +439,8 @@ fun MainScreen(settingsManager: SettingsManager) {
                         pendingRawBytes = null
                         pendingOriginalUri = null
                         pendingOriginalFileName = null
+                        pendingMaxDimUsed = null
+                        pendingRotationDegrees = null
                         showSaveDialog = false
                         pendingResult = null
                     }

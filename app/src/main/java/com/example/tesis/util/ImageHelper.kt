@@ -135,7 +135,7 @@ fun calculateSha256FromUri(context: Context, uri: Uri): String? {
 }
 
 /** Guarda los bytes de la foto capturada en Pictures/BioCount MIP y devuelve la URI y metadatos */
-data class GallerySaveResult(val uri: String?, val fileName: String, val sha256: String?)
+data class GallerySaveResult(val uri: String?, val fileName: String?, val sha256: String?)
 
 fun saveOriginalToGallery(
     context: Context,
@@ -195,13 +195,13 @@ fun saveOriginalToGallery(
                 contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
                 resolver.update(uri, contentValues, null, null)
             }
-            return GallerySaveResult(uri.toString(), fileName, sha256)
+            return GallerySaveResult(uri.toString(), fileName, calculateSha256FromUri(context, uri) ?: sha256)
         }
     } catch (e: Exception) {
         Log.e("ImageHelper", "Error general guardando en galería", e)
     }
     
-    return GallerySaveResult(null, fileName, sha256)
+    return GallerySaveResult(null, null, null)
 }
 
 fun saveOriginalImage(context: Context, bitmap: Bitmap): String? {
