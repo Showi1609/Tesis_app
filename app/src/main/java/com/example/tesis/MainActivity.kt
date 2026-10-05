@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
+import android.graphics.ImageFormat
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -225,6 +226,9 @@ fun MainScreen(settingsManager: SettingsManager) {
 
     var capturedImage by remember { mutableStateOf<Bitmap?>(null) }
     var capturedSource by remember { mutableStateOf(ImageSource.CAMERA) }
+    var pendingRawBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var pendingOriginalUri by remember { mutableStateOf<Uri?>(null) }
+    var pendingOriginalFileName by remember { mutableStateOf<String?>(null) }
     var isLive by remember { mutableStateOf(value = true) }
 
     var showSaveDialog by remember { mutableStateOf(false) }
@@ -283,9 +287,12 @@ fun MainScreen(settingsManager: SettingsManager) {
                         framingAssistant = framingAssistant,
                         executor = executor,
                         settingsManager = settingsManager
-                    ) { bitmap, source ->
+                    ) { bitmap, source, rawBytes, uri, fileName ->
                         capturedImage = bitmap
                         capturedSource = source
+                        pendingRawBytes = rawBytes
+                        pendingOriginalUri = uri
+                        pendingOriginalFileName = fileName
                         isLive = false
                     }
                 } else {
@@ -323,6 +330,37 @@ fun MainScreen(settingsManager: SettingsManager) {
                     val location = if (hasLocationPermission) locationHelper.getCurrentLocation() else null
                     val imagePath = capturedImage?.let { saveOriginalImage(context, it) }
 
+                    var originalUri: String? = null
+                    var originalFileName: String? = null
+                    var originalSha256: String? = null
+                    var originalW: Int? = null
+                    var originalH: Int? = null
+
+                    if (capturedSource == ImageSource.CAMERA) {
+                        val rawBytes = pendingRawBytes
+                        if (rawBytes != null) {
+                            val saved = com.example.tesis.util.saveOriginalToGallery(
+                                context, rawBytes,
+                                meta.farm, meta.greenhouse, meta.trapId, meta.face.code
+                            )
+                            originalUri = saved.uri
+                            originalFileName = saved.fileName
+                            originalSha256 = saved.sha256
+
+                            val opt = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            android.graphics.BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opt)
+                            originalW = opt.outWidth
+                            originalH = opt.outHeight
+                        }
+                    } else if (capturedSource == ImageSource.GALLERY) {
+                        val cUri = pendingOriginalUri
+                        if (cUri != null) {
+                            originalUri = cUri.toString()
+                            originalFileName = pendingOriginalFileName
+                            originalSha256 = com.example.tesis.util.calculateSha256FromUri(context, cUri)
+                        }
+                    }
+
                     val entity = DetectionEntity(
                         timestamp = System.currentTimeMillis(),
                         count = count,
@@ -358,7 +396,14 @@ fun MainScreen(settingsManager: SettingsManager) {
                         confThreshold = result?.confThreshold ?: ModelInfo.CONF_THRESHOLD,
                         iouThreshold = result?.iouThreshold ?: ModelInfo.IOU_NMS,
                         detectionMode = result?.detectionMode ?: MODE_WHOLE,
-                        notes = meta.notes
+                        notes = meta.notes,
+                        originalImageUri = originalUri,
+                        originalFileName = originalFileName,
+                        originalSha256 = originalSha256,
+                        originalWidth = originalW,
+                        originalHeight = originalH,
+                        processingMaxDim = if (capturedSource == ImageSource.CAMERA) 2048 else 2560,
+                        inferenceDelegate = "GPU"
                     )
                     historyManager.add(entity)
                     settingsManager.updateSamplingContext(meta.farm, meta.greenhouse, meta.trapId)
@@ -375,6 +420,9 @@ fun MainScreen(settingsManager: SettingsManager) {
                         ).show()
                         isLive = true
                         capturedImage = null
+                        pendingRawBytes = null
+                        pendingOriginalUri = null
+                        pendingOriginalFileName = null
                         showSaveDialog = false
                         pendingResult = null
                     }
@@ -390,7 +438,7 @@ fun DetectorView(
     framingAssistant: FramingAssistant,
     executor: ExecutorService,
     settingsManager: SettingsManager,
-    onCapture: (Bitmap, String) -> Unit,
+    onCapture: (Bitmap, String, ByteArray?, Uri?, String?) -> Unit,
 ) {
     val context = LocalContext.current
     val settings by settingsManager.settings.collectAsState()
@@ -431,13 +479,13 @@ fun DetectorView(
 
     // Una sola entrega por sesión de captura: la primera imagen gana y las
     // posteriores se descartan (y se reciclan) en vez de pisar el estado.
-    val deliver: (Bitmap, String) -> Unit = deliver@{ bitmap, source ->
+    val deliver: (Bitmap, String, ByteArray?, Uri?, String?) -> Unit = deliver@{ bitmap, source, rawBytes, uri, fileName ->
         if (deliveredCapture) {
             bitmap.recycle()
             return@deliver
         }
         deliveredCapture = true
-        onCapture(bitmap, source)
+        onCapture(bitmap, source, rawBytes, uri, fileName)
     }
 
     val imageCapture = remember {
@@ -453,28 +501,35 @@ fun DetectorView(
             imageCapture.takePicture(executor, object : ImageCapture.OnImageCapturedCallback() {
                 override fun onCaptureSuccess(image: ImageProxy) {
                     try {
-                        val rotation = image.imageInfo.rotationDegrees
-                        val fullBitmap = image.toBitmap()
+                        // 1. Extraer o generar los bytes JPEG originales
+                        val planes = image.planes
+                        val format = image.format
+                        val isJpeg = format == ImageFormat.JPEG
+                        var rawBytes: ByteArray? = null
 
-                        // Reducir para evitar OOM. El tope depende del mosaico.
-                        val maxDim = captureLimits.value.first
-                        val scale = maxDim / maxOf(fullBitmap.width, fullBitmap.height)
-                        val smallBitmap = if (scale < 1f) {
-                            fullBitmap.scale((fullBitmap.width * scale).toInt(), (fullBitmap.height * scale).toInt(), filter = true)
-                        } else fullBitmap
+                        if (isJpeg && planes.isNotEmpty()) {
+                            val buffer = planes[0].buffer
+                            rawBytes = ByteArray(buffer.remaining())
+                            buffer.get(rawBytes)
+                        } else {
+                            val fullBitmap = image.toBitmap()
+                            val stream = java.io.ByteArrayOutputStream()
+                            fullBitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)
+                            rawBytes = stream.toByteArray()
+                            fullBitmap.recycle()
+                        }
+                        
+                        val maxDim = captureLimits.value.first.toInt()
+                        val finalBitmap = com.example.tesis.util.decodeAndScaleImage(context, rawBytes, null, maxDim)
 
-                        if (smallBitmap != fullBitmap) fullBitmap.recycle()
-
-                        val finalBitmap = if (rotation != 0) {
-                            val matrix = android.graphics.Matrix().apply { postRotate(rotation.toFloat()) }
-                            val rotated = Bitmap.createBitmap(smallBitmap, 0, 0, smallBitmap.width, smallBitmap.height, matrix, true)
-                            smallBitmap.recycle()
-                            rotated
-                        } else smallBitmap
-
-                        ContextCompat.getMainExecutor(context).execute {
-                            captureInFlight = false
-                            deliver(finalBitmap, ImageSource.CAMERA)
+                        if (finalBitmap != null) {
+                            ContextCompat.getMainExecutor(context).execute {
+                                captureInFlight = false
+                                deliver(finalBitmap, ImageSource.CAMERA, rawBytes, null, null)
+                            }
+                        } else {
+                            Log.e("MainActivity", "decodeAndScaleImage retorno nulo")
+                            ContextCompat.getMainExecutor(context).execute { captureInFlight = false }
                         }
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Processing capture failed", e)
@@ -517,24 +572,17 @@ fun DetectorView(
         isPickerOpen = false
         if (uri == null) return@rememberLauncherForActivityResult
         try {
-            val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val source = ImageDecoder.createSource(context.contentResolver, uri)
-                ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
-                    decoder.isMutableRequired = true
-                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE // Anti-OOM
-                }
+            val fileName = com.example.tesis.util.queryFileName(context, uri) ?: "unknown_gallery.jpg"
+            val isOriginal = com.example.tesis.util.isBioCountOriginal(uri.toString(), fileName)
+            val maxDim = if (isOriginal) captureLimits.value.first.toInt() else captureLimits.value.second.toInt()
+            
+            val finalBitmap = com.example.tesis.util.decodeAndScaleImage(context, null, uri, maxDim)
+
+            if (finalBitmap != null) {
+                deliver(finalBitmap, ImageSource.GALLERY, null, uri, fileName)
             } else {
-                @Suppress("DEPRECATION")
-                MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+                Toast.makeText(context, "Error al procesar imagen de galería", Toast.LENGTH_SHORT).show()
             }
-
-            val maxDim = captureLimits.value.second
-            val scale = maxDim / maxOf(bitmap.width, bitmap.height)
-            val processedBitmap = if (scale < 1f) {
-                bitmap.scale((bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), filter = true)
-            } else bitmap
-
-            deliver(processedBitmap, ImageSource.GALLERY)
         } catch (e: Exception) {
             Log.e("MainActivity", "Gallery failed", e)
             Toast.makeText(context, "Error al cargar imagen", Toast.LENGTH_SHORT).show()
