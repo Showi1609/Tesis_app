@@ -49,6 +49,18 @@ data class DetectionEntity(
     val framingMode: String? = null,
     val trapWidthCm: Float? = null,
     val trapHeightCm: Float? = null,
+
+    // Rastreabilidad de la imagen original
+    val originalImageUri: String? = null,
+    val originalFileName: String? = null,
+    val originalSha256: String? = null,
+    val originalWidth: Int? = null,
+    val originalHeight: Int? = null,
+    
+    // Parámetros de preprocesamiento e inferencia real
+    val processingMaxDim: Int? = null,
+    val inferenceDelegate: String? = null,
+
     val windowWidthCm: Float? = null,
     val windowHeightCm: Float? = null,
     val installTimestamp: Long? = null,
