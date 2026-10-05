@@ -229,6 +229,8 @@ fun MainScreen(settingsManager: SettingsManager) {
     var pendingRawBytes by remember { mutableStateOf<ByteArray?>(null) }
     var pendingOriginalUri by remember { mutableStateOf<Uri?>(null) }
     var pendingOriginalFileName by remember { mutableStateOf<String?>(null) }
+    var pendingMaxDimUsed by remember { mutableStateOf<Int?>(null) }
+    var pendingRotationDegrees by remember { mutableStateOf<Int?>(null) }
     var isLive by remember { mutableStateOf(value = true) }
 
     var showSaveDialog by remember { mutableStateOf(false) }
@@ -287,12 +289,14 @@ fun MainScreen(settingsManager: SettingsManager) {
                         framingAssistant = framingAssistant,
                         executor = executor,
                         settingsManager = settingsManager
-                    ) { bitmap, source, rawBytes, uri, fileName ->
+                    ) { bitmap, source, rawBytes, uri, fileName, maxDimUsed, rotation ->
                         capturedImage = bitmap
                         capturedSource = source
                         pendingRawBytes = rawBytes
                         pendingOriginalUri = uri
                         pendingOriginalFileName = fileName
+                        pendingMaxDimUsed = maxDimUsed
+                        pendingRotationDegrees = rotation
                         isLive = false
                     }
                 } else {
@@ -438,7 +442,7 @@ fun DetectorView(
     framingAssistant: FramingAssistant,
     executor: ExecutorService,
     settingsManager: SettingsManager,
-    onCapture: (Bitmap, String, ByteArray?, Uri?, String?) -> Unit,
+    onCapture: (Bitmap, String, ByteArray?, Uri?, String?, Int, Int?) -> Unit,
 ) {
     val context = LocalContext.current
     val settings by settingsManager.settings.collectAsState()
@@ -479,13 +483,13 @@ fun DetectorView(
 
     // Una sola entrega por sesión de captura: la primera imagen gana y las
     // posteriores se descartan (y se reciclan) en vez de pisar el estado.
-    val deliver: (Bitmap, String, ByteArray?, Uri?, String?) -> Unit = deliver@{ bitmap, source, rawBytes, uri, fileName ->
+    val deliver: (Bitmap, String, ByteArray?, Uri?, String?, Int, Int?) -> Unit = deliver@{ bitmap, source, rawBytes, uri, fileName, maxDim, rotation ->
         if (deliveredCapture) {
             bitmap.recycle()
             return@deliver
         }
         deliveredCapture = true
-        onCapture(bitmap, source, rawBytes, uri, fileName)
+        onCapture(bitmap, source, rawBytes, uri, fileName, maxDim, rotation)
     }
 
     val imageCapture = remember {
@@ -520,12 +524,12 @@ fun DetectorView(
                         }
                         
                         val maxDim = captureLimits.value.first.toInt()
-                        val finalBitmap = com.example.tesis.util.decodeAndScaleImage(context, rawBytes, null, maxDim)
+                        val finalBitmap = com.example.tesis.util.decodeAndScaleImage(context, rawBytes, null, maxDim, image.imageInfo.rotationDegrees)
 
                         if (finalBitmap != null) {
                             ContextCompat.getMainExecutor(context).execute {
                                 captureInFlight = false
-                                deliver(finalBitmap, ImageSource.CAMERA, rawBytes, null, null)
+                                deliver(finalBitmap, ImageSource.CAMERA, rawBytes, null, null, maxDim, image.imageInfo.rotationDegrees)
                             }
                         } else {
                             Log.e("MainActivity", "decodeAndScaleImage retorno nulo")
@@ -579,7 +583,7 @@ fun DetectorView(
             val finalBitmap = com.example.tesis.util.decodeAndScaleImage(context, null, uri, maxDim)
 
             if (finalBitmap != null) {
-                deliver(finalBitmap, ImageSource.GALLERY, null, uri, fileName)
+                deliver(finalBitmap, ImageSource.GALLERY, null, uri, fileName, maxDim, null)
             } else {
                 Toast.makeText(context, "Error al procesar imagen de galería", Toast.LENGTH_SHORT).show()
             }
@@ -1132,6 +1136,28 @@ fun SaveDetectionDialog(
     var faceTouched by remember { mutableStateOf(false) }
     LaunchedEffect(suggestedFace) { if (!faceTouched) face = suggestedFace }
 
+    // Manejo de permisos para escritura de galería en SDK <= 28
+    var waitingForPermission by remember { mutableStateOf<SampleMetadata?>(null) }
+    val storageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val meta = waitingForPermission
+        if (meta != null) {
+            waitingForPermission = null
+            onConfirm(meta)
+        }
+    }
+
+    val triggerConfirm: (SampleMetadata) -> Unit = { meta ->
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            waitingForPermission = meta
+            storageLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            onConfirm(meta)
+        }
+    }
+
     val otherFaceCount = remember(historyToday, trapCode, greenhouseName, face) {
         val otherFace = if (face == TrapFace.A) TrapFace.B else TrapFace.A
         historyToday.find {
@@ -1513,7 +1539,7 @@ fun SaveDetectionDialog(
                     val effective = trapRegistry.effectiveSize(trap)
 
                     settingsManager.updateSelectedCrop(selectedCrop)
-                                        onConfirm(
+                    triggerConfirm(
                         SampleMetadata(
                             crop = selectedCrop,
                             farm = trap.farm,

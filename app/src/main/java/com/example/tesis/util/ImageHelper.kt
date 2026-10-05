@@ -24,11 +24,32 @@ import kotlin.math.max
 
 const val GALLERY_FOLDER_NAME = "BioCount MIP"
 
+/** Devuelve el nombre del archivo apuntado por la URI */
+fun queryFileName(context: Context, uri: Uri): String? {
+    var result: String? = null
+    if (uri.scheme == "content") {
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (index != -1) result = cursor.getString(index)
+            }
+        }
+    }
+    if (result == null) {
+        val path = uri.path
+        if (path != null) {
+            val cut = path.lastIndexOf('/')
+            result = if (cut != -1) path.substring(cut + 1) else path
+        }
+    }
+    return result
+}
+
 /**
  * Aplica el mismo preprocesamiento unificado para fotos de cámara (bytes) o galería (Uri).
  * El orden estricto de v1.1 es: decodificar SIN aplicar EXIF, redimensionar, y rotar después.
  */
-fun decodeAndScaleImage(context: Context, bytes: ByteArray?, uri: Uri?, maxDim: Int): Bitmap? {
+fun decodeAndScaleImage(context: Context, bytes: ByteArray?, uri: Uri?, maxDim: Int, rotationOverride: Int? = null): Bitmap? {
     try {
         // 1. Decodificar SIN aplicar EXIF
         val options = BitmapFactory.Options().apply { inMutable = true }
@@ -50,9 +71,11 @@ fun decodeAndScaleImage(context: Context, bytes: ByteArray?, uri: Uri?, maxDim: 
         
         if (smallBitmap != bitmap) bitmap.recycle()
 
-        // 3. Rotar según EXIF
+        // 3. Rotar según EXIF o el Override provisto
         var rotationDegrees = 0
-        if (bytes != null) {
+        if (rotationOverride != null) {
+            rotationDegrees = rotationOverride
+        } else if (bytes != null) {
             val exif = ExifInterface(ByteArrayInputStream(bytes))
             rotationDegrees = exif.rotationDegrees
         } else if (uri != null) {
@@ -120,39 +143,40 @@ fun saveOriginalToGallery(
     farm: String,
     greenhouse: String,
     trapId: String,
-    face: String
+    face: String,
+    rotationDegrees: Int
 ): GallerySaveResult {
     val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
     val shortId = UUID.randomUUID().toString().take(6)
     val fileName = "BioCount_${sanitizeForFileName(farm)}_${sanitizeForFileName(greenhouse)}_${sanitizeForFileName(trapId)}_${sanitizeForFileName(face)}_${timestamp}_${shortId}.jpg"
     val sha256 = calculateSha256(jpegBytes)
     
-    val resolver = context.contentResolver
-    val contentValues = ContentValues().apply {
-        put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/$GALLERY_FOLDER_NAME")
-            put(MediaStore.Images.Media.IS_PENDING, 1)
+    try {
+        val resolver = context.contentResolver
+        val contentValues = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/$GALLERY_FOLDER_NAME")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
         }
-    }
 
-    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-    if (uri != null) {
-        try {
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+        if (uri != null) {
             resolver.openOutputStream(uri)?.use { out ->
                 out.write(jpegBytes)
             }
             
-            // Verificar que se haya copiado la orientación si venía en los bytes (ExifInterface en Q+)
+            // Garantizar que la orientación guardada en galería coincida con rotationDegrees
             try {
                 resolver.openFileDescriptor(uri, "rw")?.use { pfd ->
-                    val sourceExif = ExifInterface(ByteArrayInputStream(jpegBytes))
                     val destExif = ExifInterface(pfd.fileDescriptor)
-                    val rotation = sourceExif.rotationDegrees
-                    if (rotation != 0 && destExif.rotationDegrees == 0) {
-                        Log.w("ImageHelper", "Restaurando orientacion EXIF $rotation en galeria")
-                        val orientationValue = when(rotation) {
+                    val bytesExif = ExifInterface(ByteArrayInputStream(jpegBytes))
+                    val bytesRotation = bytesExif.rotationDegrees
+                    if (bytesRotation != rotationDegrees) {
+                        Log.w("ImageHelper", "EXIF del JPEG ($bytesRotation) difiere de rotationDegrees ($rotationDegrees). Sobrescribiendo TAG_ORIENTATION en galería.")
+                        val orientationValue = when(rotationDegrees) {
                             90 -> ExifInterface.ORIENTATION_ROTATE_90
                             180 -> ExifInterface.ORIENTATION_ROTATE_180
                             270 -> ExifInterface.ORIENTATION_ROTATE_270
@@ -171,13 +195,13 @@ fun saveOriginalToGallery(
                 contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
                 resolver.update(uri, contentValues, null, null)
             }
-        } catch (e: Exception) {
-            Log.e("ImageHelper", "Error guardando en galeria", e)
-            return GallerySaveResult(null, fileName, sha256)
+            return GallerySaveResult(uri.toString(), fileName, sha256)
         }
+    } catch (e: Exception) {
+        Log.e("ImageHelper", "Error general guardando en galería", e)
     }
     
-    return GallerySaveResult(uri?.toString(), fileName, sha256)
+    return GallerySaveResult(null, fileName, sha256)
 }
 
 fun saveOriginalImage(context: Context, bitmap: Bitmap): String? {

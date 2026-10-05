@@ -71,6 +71,9 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
     private var outputCols: Int = 0
     private var isTransposed: Boolean = false
 
+    var activeDelegate: String? = null
+        private set
+
     init {
         val model = cargarModeloDesdeAssets(context, modelPath)
         
@@ -78,9 +81,11 @@ class WhiteflyDetector(context: Context, modelPath: String = "whitefly.tflite") 
             try {
                 gpuDelegate = GpuDelegate()
                 addDelegate(gpuDelegate)
+                activeDelegate = "GPU"
                 Log.d("WhiteflyDetector", "GPU Delegate added successfully")
             } catch (e: Throwable) {
                 Log.w("WhiteflyDetector", "GPU Delegate failed to load, falling back to CPU", e)
+                activeDelegate = "CPU"
                 setNumThreads(4)
             }
         }
