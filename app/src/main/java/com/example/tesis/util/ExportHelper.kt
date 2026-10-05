@@ -113,6 +113,12 @@ private val columns: List<Column> = listOf(
     Column("estado_trampa", 16) { text(it.trapStatus) },
     Column("adultos_trampa_semana", 22) { num(it.trapAggregate?.catchPerTrapPerWeek, 1) },
 
+    // Metadatos de la imagen original y su procesamiento
+    Column("imagen_original", 20) { text(it.e.originalFileName) },
+    Column("sha256_original", 20) { text(it.e.originalSha256) },
+    Column("delegado_inferencia", 18) { text(it.e.inferenceDelegate) },
+    Column("max_dim_procesado", 18) { whole(it.e.processingMaxDim) },
+
     // Confianza del modelo (no es acierto: solo lo seguro que estaba)
     Column("confianza_media", 14) { num(Metrics.meanScore(it.e), 4) },
     Column("confianza_minima", 14) { num(Metrics.minScore(it.e), 4) },
